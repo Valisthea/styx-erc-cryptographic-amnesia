@@ -1,0 +1,442 @@
+---
+eip: TBD
+title: Cryptographic Amnesia Interface
+description: An interface for provable, irreversible encryption key destruction on append-only ledgers.
+author: Valisthea (@Valisthea)
+discussions-to: https://ethereum-magicians.org/
+status: Draft
+type: Standards Track
+category: ERC
+created: 2026-04-12
+requires: 165
+---
+
+## Abstract
+
+This EIP defines an interface for **cryptographic amnesia** — the provable, irreversible destruction of encryption keys such that previously encrypted on-chain data becomes mathematically indistinguishable from random noise. No key exists anywhere in the universe to decrypt it.
+
+The interface specifies a **destruction ceremony** protocol where a master decryption key, split across independent custodians via Shamir Secret Sharing, is provably destroyed share by share. Each destruction is attested by a zero-knowledge proof. A Verifiable Delay Function (VDF) time-lock prevents coerced or premature destruction. Once the ceremony completes, the encrypted data remains on-chain but is permanently unrecoverable.
+
+This is the first standard to enable a credible **right to be forgotten** on an immutable, append-only ledger.
+
+## Motivation
+
+Blockchains are designed to never forget. Every transaction, every state change, every byte persists forever. This fundamental property creates an irreconcilable tension with:
+
+1. **GDPR Article 17** — The right to erasure ("right to be forgotten"). EU law requires data controllers to delete personal data upon request. On a public blockchain, deletion is architecturally impossible. Encrypted data with destroyed keys satisfies the legal requirement: the data exists but is provably inaccessible — equivalent to erasure under current regulatory interpretation.
+
+2. **Governance hygiene** — DAO votes should not create permanent political records. After a governance cycle concludes, individual voting positions become a liability: coercion, retaliation, faction warfare. Cryptographic amnesia allows the result to persist while individual opinions vanish.
+
+3. **Confidential business logic** — Sealed-bid auctions, private negotiations, competitive intelligence. After the outcome is determined, the inputs should become permanently inaccessible. No future breach, subpoena, or quantum computer should recover them.
+
+4. **Medical and legal records** — Temporary on-chain storage of sensitive records (medical trials, legal proceedings, whistleblower reports) where retention past a defined period creates risk rather than value.
+
+5. **Key compromise recovery** — When an encryption key is suspected compromised, proactive key destruction limits the damage window. The attacker may have the key, but the destruction ceremony ensures no NEW data can be encrypted under the compromised key, and creates a public, verifiable timestamp of the compromise response.
+
+### Why can't you just "delete" the key?
+
+Deleting a key from a single server proves nothing. The key could exist in backups, RAM dumps, HSM snapshots, or the administrator's memory. Cryptographic amnesia requires **distributed destruction with individual proofs** — each custodian independently proves their share no longer exists, and the threshold property of Shamir SSS ensures that destruction of sufficient shares makes reconstruction mathematically impossible, regardless of what any single party retains.
+
+### Why not just use time-locked encryption?
+
+Time-locked encryption (e.g., timelock puzzles, VDF-encrypted payloads) guarantees data BECOMES accessible after time T. This standard guarantees the opposite: data becomes PERMANENTLY inaccessible after the ceremony. The VDF in this standard is used as a safety mechanism — preventing rushed destruction — not as the amnesia primitive itself.
+
+## Specification
+
+The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in RFC 2119 and RFC 8174.
+
+### Definitions
+
+- **Amnesia**: The state where encrypted data is provably unrecoverable. The ciphertext exists on-chain but no key exists to decrypt it.
+- **Ceremony**: The multi-step protocol through which key shares are provably destroyed. A ceremony transitions through defined states and completes only when the destruction threshold is met.
+- **Custodian**: An independent party holding one share of the master decryption key, generated via Shamir Secret Sharing. Custodians MUST be independent entities (not controlled by the same party).
+- **Destruction Proof**: A zero-knowledge proof attesting that a custodian participated in the active ceremony. The proof demonstrates knowledge of the share (proving the custodian had it) and active participation during the ACTIVE phase.
+- **Destruction Threshold**: The minimum number of shares (k of n) that must be destroyed to guarantee reconstruction is impossible. For a (k, n) Shamir scheme, destroying (n - k + 1) shares guarantees the remaining (k - 1) shares are insufficient for reconstruction.
+- **VDF Time-Lock**: A Verifiable Delay Function that enforces a minimum delay between ceremony initiation and the first share destruction. Prevents coerced, panicked, or malicious rush-destruction.
+- **Forgoable**: Data or a session marked as eligible for amnesia. Not all encrypted data should be forgettable — some must persist (e.g., ownership proofs, financial records with regulatory retention requirements).
+- **Session**: A logical grouping of encrypted data sharing the same encryption key. One ceremony destroys one session's key. Multiple sessions may exist under different keys.
+
+### Ceremony Lifecycle
+
+```
+    ┌─────────┐     VDF delay      ┌───────────┐
+    │  IDLE   │ ──────────────────► │  PENDING  │
+    └─────────┘  initiateOblivion() └───────────┘
+                                         │
+                              block.timestamp >= vdfUnlockTime
+                              (implicit — no transaction needed)
+                                         │
+                                         ▼
+                                   ┌───────────┐
+                                   │  ACTIVE   │ ◄─── submitDestructionProof()
+                                   └───────────┘      (one per custodian)
+                                         │
+                              threshold reached (n-k+1 proofs)
+                                         │
+                                         ▼
+                                   ┌───────────┐
+                                   │ COMPLETED │  ← Amnesia achieved
+                                   └───────────┘
+
+    Before COMPLETED — cancelOblivion() or vetoCeremony() or timeout:
+
+    ┌──────────────┐    TIMEOUT / CANCELLED     ┌───────────┐
+    │ PENDING or   │ ──────────────────────────► │  FAILED   │
+    │   ACTIVE     │    VETOED / MAX_ATTEMPTS    └───────────┘
+    └──────────────┘                                  │
+                                               (keys NOT destroyed,
+                                                new ceremony possible
+                                                after cooldown)
+```
+
+The PENDING→ACTIVE transition is **implicit**: it occurs automatically when `block.timestamp >= vdfUnlockTime`. No explicit transaction is required. Callers MUST check `vdfUnlockTime` to determine effective state.
+
+### Interface
+
+```solidity
+// SPDX-License-Identifier: CC0-1.0
+pragma solidity >=0.8.0;
+
+/// @title ERC-YYYY Cryptographic Amnesia Interface
+/// @author Valisthea (@Valisthea)
+/// @notice An interface for provable, irreversible encryption
+///         key destruction on append-only ledgers.
+
+interface IERCYYYY {
+
+    // ─── Types ───────────────────────────────────────
+
+    enum CeremonyState {
+        IDLE,       // No ceremony in progress for this session
+        PENDING,    // Ceremony initiated, VDF time-lock counting down
+        ACTIVE,     // VDF elapsed, accepting destruction proofs
+        COMPLETED,  // Threshold reached — amnesia achieved
+        FAILED      // Timeout — insufficient proofs, ceremony aborted
+    }
+
+    /// @dev Encodes why a ceremony transitioned to FAILED.
+    enum FailureReason {
+        TIMEOUT,             // Ceremony deadline elapsed before threshold reached
+        INSUFFICIENT_PROOFS, // Not enough custodians participated in time
+        VETOED,              // Ceremony was blocked by an authorized veto
+        CANCELLED,           // Ceremony was explicitly cancelled by the initiator
+        MAX_ATTEMPTS         // Session has exhausted its maximum ceremony attempts
+    }
+
+    /// @notice Full ceremony state for a session.
+    /// @dev    The PENDING→ACTIVE transition is implicit: it occurs automatically
+    ///         when block.timestamp >= vdfUnlockTime. No explicit transaction is
+    ///         required to enter ACTIVE — callers MUST check block.timestamp
+    ///         against vdfUnlockTime to determine effective state.
+    struct CeremonyInfo {
+        bytes32 sessionId;               // Unique session identifier
+        CeremonyState state;             // Stored state (PENDING may be effectively ACTIVE)
+        uint256 initiatedAt;             // Block timestamp of initiation
+        uint256 vdfUnlockTime;           // Timestamp at which ACTIVE begins (implicit transition)
+        uint256 activeSince;             // Block timestamp of first proof accepted (0 if not yet)
+        uint256 deadline;                // Timestamp after which ceremony fails
+        uint256 totalCustodians;         // n in (k, n) Shamir scheme
+        uint256 reconstructionThreshold; // k — minimum shares needed to reconstruct the key
+        uint256 threshold;               // Destruction threshold: (n - k + 1) proofs needed
+        uint256 proofsReceived;          // Destruction proofs submitted so far
+        address initiator;               // Who started the ceremony
+        uint256 attemptNumber;           // Which attempt this is (1-indexed, incremented on retry)
+    }
+
+    // ─── Custom Errors ───────────────────────────────
+
+    error CeremonyNotIdle(bytes32 sessionId, CeremonyState currentState);
+    error CeremonyNotActive(bytes32 sessionId, CeremonyState currentState);
+    error VDFNotElapsed(bytes32 sessionId, uint256 remaining);
+    error CeremonyExpired(bytes32 sessionId);
+    error InvalidDestructionProof(bytes32 sessionId, uint256 custodianIndex);
+    error CustodianAlreadyDestroyed(bytes32 sessionId, uint256 custodianIndex);
+    error SessionNotForgoable(bytes32 sessionId);
+    error InvalidCustodianIndex(uint256 index, uint256 max);
+    error UnauthorizedInitiator(address caller);
+    error CooldownNotElapsed(bytes32 sessionId, uint256 remaining);
+    error MaxAttemptsReached(bytes32 sessionId, uint256 maxAttempts);
+
+    // ─── Events ──────────────────────────────────────
+
+    event SessionCreated(
+        bytes32 indexed sessionId,
+        address[] custodians,
+        uint256 k,
+        bool forgoable
+    );
+
+    event OblivionInitiated(
+        bytes32 indexed sessionId,
+        address indexed initiator,
+        uint256 vdfUnlockTime,
+        uint256 deadline
+    );
+
+    event ShareDestroyed(
+        bytes32 indexed sessionId,
+        uint256 indexed custodianIndex,
+        bytes32 proofHash,
+        uint256 proofsTotal,
+        uint256 thresholdNeeded
+    );
+
+    event AmnesiaAchieved(
+        bytes32 indexed sessionId,
+        uint256 completedAt
+    );
+
+    event OblivionFailed(
+        bytes32 indexed sessionId,
+        FailureReason reason
+    );
+
+    event OblivionCancelled(
+        bytes32 indexed sessionId,
+        address indexed cancelledBy
+    );
+
+    event OblivionVetoed(
+        bytes32 indexed sessionId,
+        address indexed vetoedBy
+    );
+
+    // ─── Session Management ──────────────────────────
+
+    function createSession(
+        bytes32 sessionId,
+        address[] calldata custodians,
+        uint256 k,
+        bool forgoable
+    ) external;
+
+    // ─── Ceremony Lifecycle ──────────────────────────
+
+    function initiateOblivion(bytes32 sessionId)
+        external
+        returns (uint256 vdfUnlockTime, uint256 deadline);
+
+    function submitDestructionProof(
+        bytes32 sessionId,
+        uint256 custodianIndex,
+        bytes calldata proof
+    ) external returns (bool ceremonyComplete);
+
+    function abortExpiredCeremony(bytes32 sessionId) external;
+    function cancelOblivion(bytes32 sessionId) external;
+    function vetoCeremony(bytes32 sessionId, bytes calldata vetoProof) external;
+
+    // ─── Hook Registration ───────────────────────────
+
+    function registerAmnesiaHook(bytes32 sessionId, address hookContract) external;
+    function removeAmnesiaHook(bytes32 sessionId, address hookContract) external;
+
+    // ─── Queries ─────────────────────────────────────
+
+    function ceremonyInfo(bytes32 sessionId) external view returns (CeremonyInfo memory);
+    function isForgotten(bytes32 sessionId) external view returns (bool);
+    function isForgoable(bytes32 sessionId) external view returns (bool);
+    function isCustodianDestroyed(bytes32 sessionId, uint256 custodianIndex) external view returns (bool);
+    function custodianAddress(bytes32 sessionId, uint256 custodianIndex) external view returns (address);
+    function isCustodian(bytes32 sessionId, address account) external view returns (bool);
+    function custodianCount(bytes32 sessionId) external view returns (uint256 n);
+    function destructionThreshold(bytes32 sessionId) external view returns (uint256);
+
+    // ─── Configuration ───────────────────────────────
+
+    function minVDFDelay() external view returns (uint256);
+    function maxCeremonyDuration() external view returns (uint256);
+    function minCustodians() external view returns (uint256);
+    function ceremonyCooldown() external view returns (uint256);
+    function ceremonyAttemptCount(bytes32 sessionId) external view returns (uint256);
+    function maxCeremonyAttempts() external view returns (uint256);
+}
+```
+
+### Extension: Amnesia Compliance (OPTIONAL)
+
+For regulatory compliance use cases, implementations MAY expose:
+
+```solidity
+/// @title ERC-YYYY Compliance Extension
+interface IERCYYYY_Compliance is IERCYYYY {
+
+    function complianceReceipt(bytes32 sessionId)
+        external view returns (bytes memory receipt);
+
+    function dataCategory(bytes32 sessionId)
+        external view returns (string memory category);
+
+    function retentionPeriod(bytes32 sessionId)
+        external view returns (uint256 retainUntil);
+}
+```
+
+### Extension: Amnesia Hooks (OPTIONAL)
+
+For contracts that need to react to amnesia events. Hook contracts MUST implement this interface and be registered via `registerAmnesiaHook()`:
+
+```solidity
+/// @title ERC-YYYY Hooks Extension
+/// @dev Hooks are called AFTER the state transitions to COMPLETED,
+///      with a gas stipend of 50,000. Hook reverts do not revert the ceremony.
+interface IERCYYYY_Hooks {
+
+    /// @notice Called when amnesia is achieved for a session.
+    /// @dev    Called AFTER COMPLETED state transition. Gas stipend: 50,000.
+    /// @param  sessionId  The session that was forgotten.
+    /// @return selector   Must return `IERCYYYY_Hooks.onAmnesiaAchieved.selector`
+    function onAmnesiaAchieved(bytes32 sessionId)
+        external returns (bytes4 selector);
+}
+```
+
+### Destruction Proof Format
+
+The destruction proof MUST encode the following public inputs:
+
+```
+destructionPublicInputs = {
+    chainId:           uint256,   // EIP-155 chain ID
+    contractAddress:   address,   // Amnesia contract address
+    sessionId:         bytes32,   // Session being forgotten
+    custodianIndex:    uint256,   // Which custodian is submitting
+    shareCommitment:   bytes32,   // Poseidon hash of the original share
+    destructionNonce:  bytes32,   // Verifiable randomness used for overwrite
+    timestamp:         uint256,   // Block timestamp of destruction
+    vdfOutput:         bytes32    // VDF proof that minimum delay elapsed
+}
+```
+
+The proof MUST attest:
+
+1. The prover knew a value `share` such that `Poseidon(share) == shareCommitment`
+2. The value `share` was a valid point on the Shamir polynomial for this session
+3. The prover PARTICIPATED in the ceremony — was present and active during the ACTIVE phase at the time of proof generation
+4. The VDF output is valid for the elapsed time since ceremony initiation
+
+### Shamir Secret Sharing Parameters
+
+Implementations MUST use the following constraints:
+
+- **Minimum custodians (n)**: 5 (RECOMMENDED: 7 or more)
+- **Reconstruction threshold (k)**: At least ⌈n/2⌉ + 1 (strict majority)
+- **Destruction threshold**: (n - k + 1) shares must be destroyed
+- **Field**: Implementations SHOULD use the BN254 scalar field or the BLS12-381 scalar field for compatibility with common ZK proof systems
+
+Example configurations:
+
+| n (custodians) | k (reconstruct) | Destroy needed | Safety margin |
+|---|---|---|---|
+| 5 | 3 | 3 | 2 shares can remain |
+| 7 | 4 | 4 | 3 shares can remain |
+| 9 | 5 | 5 | 4 shares can remain |
+| 13 | 7 | 7 | 6 shares can remain |
+
+### VDF Parameters
+
+The VDF time-lock MUST enforce:
+
+- **Minimum delay**: 24 hours (RECOMMENDED: 72 hours for high-sensitivity data)
+- **VDF construction**: Implementations SHOULD use Wesolowski or Pietrzak VDF proofs
+- **Verification**: The VDF output MUST be verifiable on-chain in O(1) time
+
+## Rationale
+
+### Why Shamir Secret Sharing instead of MPC?
+
+MPC (Multi-Party Computation) protocols can achieve similar goals but require interactive ceremonies with all custodians online simultaneously. Shamir SSS allows independent, asynchronous share destruction — each custodian can submit their proof at any time during the ceremony window without coordinating with others. This is critical for a decentralized protocol where custodians may be in different jurisdictions and time zones.
+
+### Why VDF instead of a simple timelock?
+
+A simple block-number-based timelock can be manipulated by validators (block timestamp manipulation ± 15 seconds, or longer in edge cases). A VDF provides a cryptographic guarantee of elapsed time that is independent of block production. The VDF output serves as proof that real time has passed, not just that blocks have been produced.
+
+### Why is the PENDING→ACTIVE transition implicit?
+
+Requiring an explicit transaction to enter ACTIVE state would create a griefing vector: anyone could delay the ceremony by simply not submitting the transition. Making the transition implicit (effective when `block.timestamp >= vdfUnlockTime`) removes this attack surface. Callers MUST check `vdfUnlockTime` directly rather than relying on the stored `state` field.
+
+### Why does FAILED not destroy keys?
+
+If a ceremony fails (insufficient custodians participate), the keys remain intact. This is a safety property: data should only become inaccessible through a completed ceremony with full threshold verification. A partial ceremony that destroyed some shares but not enough would leave the system in an ambiguous state — some shares gone, but data still theoretically recoverable. FAILED means: nothing changed, try again.
+
+### Why cancelOblivion and vetoCeremony?
+
+These provide two distinct safety mechanisms:
+
+- `cancelOblivion` — the initiator can abort their own ceremony (e.g., if initiated by mistake, or if governance later decides against it)
+- `vetoCeremony` — an authorized third party can block destruction during the PENDING phase (e.g., court order, legal hold, governance veto)
+
+Both transitions to FAILED preserve the keys, allowing a corrected ceremony to be initiated after the cooldown.
+
+### Why ceremonyCooldown and maxCeremonyAttempts?
+
+Unlimited retry attempts could be used to spam ceremonies as a denial-of-service. The cooldown prevents immediate retry after failure. The maximum attempt count prevents indefinite harassment of custodians who consistently fail to participate. Together they bound the total number of ceremony interactions for any session.
+
+### Why is amnesia irreversible?
+
+Once `isForgotten` returns true, it MUST never return false. This is the core guarantee: amnesia is a one-way function. If it could be reversed, the legal and privacy guarantees collapse. A regulator needs to trust that `isForgotten == true` means the data is gone forever.
+
+### Interaction with ERC-1680 (Encrypted Token Interface)
+
+This EIP is designed to complement [ERC-1680](./eip-1680.md). A typical workflow:
+
+1. Encrypted token contract stores balances encrypted under key K
+2. Key K is split into shares via Shamir SSS and distributed to custodians
+3. Governance cycle completes, votes are tallied
+4. `initiateOblivion(sessionId)` is called
+5. After VDF delay (implicit ACTIVE transition), custodians submit destruction proofs
+6. Once threshold is met: `AmnesiaAchieved` emitted, hooks called AFTER state transition
+7. All balances/votes encrypted under K are now permanent noise
+8. The tally result (public) persists. Individual votes (encrypted) are forgotten.
+
+## Backwards Compatibility
+
+This EIP introduces entirely new functionality with no precedent in existing ERCs. It has no backwards compatibility concerns with existing token or contract standards.
+
+This EIP REQUIRES [ERC-165](./eip-165.md) for interface detection.
+
+## Reference Implementation
+
+A reference implementation is provided in the STYX Protocol repository (`Valisthea/styx-protocol`, pending publication):
+
+- **StyxOblivionCoordinator.sol**: Full ceremony lifecycle management
+- **StyxDestructionVerifier.sol**: On-chain ZK destruction proof verifier
+- **StyxVDFVerifier.sol**: Wesolowski VDF on-chain verification
+
+## Security Considerations
+
+### Custodian Collusion
+
+If all custodians secretly retain copies of their shares before "destroying" them, amnesia is fake. The destruction proof mitigates this: the ZK proof requires demonstrating active participation in the ACTIVE ceremony phase. However, a custodian with a hidden backup device could theoretically retain the share outside the proof scope.
+
+**Mitigation**: Use HSMs with secure deletion capabilities as custodians. For maximum security, custodians SHOULD be institutionally diverse (different jurisdictions, organizations, and hardware vendors).
+
+### Coerced Destruction
+
+An attacker who compromises the ceremony initiator could force premature data destruction. The VDF time-lock prevents immediate destruction. The PENDING phase gives stakeholders time to detect and respond via `vetoCeremony`.
+
+**Mitigation**: Require multi-sig or governance vote to call `initiateOblivion`. Use `vetoCeremony` during the PENDING phase.
+
+### Quantum Threat to Shamir Shares
+
+Shamir Secret Sharing over finite fields is information-theoretically secure — immune to quantum computers. Even with a quantum computer, an attacker cannot reconstruct a (k, n) secret from fewer than k shares.
+
+### Partial Destruction Race
+
+If the ceremony deadline arrives with exactly (threshold - 1) proofs, the system transitions to FAILED. Implementations MUST use `block.timestamp >= deadline` strictly — a proof arriving in the deadline block SHOULD be accepted.
+
+### Ghost Data Recovery
+
+After amnesia, the ciphertext remains on-chain. A future cryptanalytic breakthrough against the FHE scheme could theoretically recover the plaintext without the key.
+
+**Mitigation**: Use FHE parameters with at least 128-bit security margin. Lattice-based FHE schemes (TFHE, BFV) are believed quantum-resistant.
+
+### Chain Reorganization
+
+A chain reorganization could revert an `AmnesiaAchieved` event. If custodians delete their local backups upon observing the event but the chain reorgs, the ceremony state reverts but the shares are genuinely gone.
+
+**Mitigation**: Custodians SHOULD wait for sufficient block confirmations (RECOMMENDED: 64 blocks on Ethereum, 1 epoch on PoS chains) before performing irreversible local share deletion.
+
+## Copyright
+
+Copyright and related rights waived via [CC0](../LICENSE.md).
