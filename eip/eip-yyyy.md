@@ -3,7 +3,7 @@ eip: TBD
 title: Cryptographic Amnesia Interface
 description: An interface for provable, irreversible encryption key destruction on append-only ledgers.
 author: Valisthea (@Valisthea)
-discussions-to: https://ethereum-magicians.org/
+discussions-to: https://ethereum-magicians.org/t/erc-cryptographic-amnesia-interface-provable-key-destruction-for-the-right-to-be-forgotten-on-blockchain/28215
 status: Draft
 type: Standards Track
 category: ERC
