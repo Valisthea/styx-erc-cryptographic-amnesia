@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity >=0.8.0;
 
-/// @title ERC-YYYY Cryptographic Amnesia Interface
+/// @title ERC-8228 Cryptographic Amnesia Interface
 /// @author Valisthea (@Valisthea)
 /// @notice Standard interface for provable, irreversible encryption
 ///         key destruction on append-only ledgers.
 
-interface IERCYYYY {
+interface IERC8228 {
 
     // ─── Types ───────────────────────────────────────
 
@@ -238,7 +238,7 @@ interface IERCYYYY {
     ///         with a gas stipend of 50,000 per hook.
     ///         Hook reverts do NOT revert the ceremony — amnesia is irreversible
     ///         once COMPLETED. Hook failures are logged but do not block completion.
-    ///         The hook contract MUST implement IERCYYYY_Hooks.
+    ///         The hook contract MUST implement IERC8228_Hooks.
     ///         Implementations SHOULD limit the number of registered hooks
     ///         per session to prevent unbounded gas usage.
     /// @param  sessionId    Session to watch for amnesia completion.

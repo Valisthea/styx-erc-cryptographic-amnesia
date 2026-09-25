@@ -1,10 +1,14 @@
-# ERC-YYYY: Cryptographic Amnesia Interface
+# ERC-8228: Cryptographic Amnesia
+
+**Canonical proposal:** [ethereum/ERCs#1681](https://github.com/ethereum/ERCs/pull/1681) · **Discussion:** [Ethereum Magicians](https://ethereum-magicians.org/t/erc-8228-cryptographic-amnesia/28215)
+
+The authoritative text is the one in the pull request; this repository is a working mirror.
 
 > Provable, irreversible encryption key destruction on append-only ledgers.
 
 **Status:** Draft
 **Author:** [@Valisthea](https://github.com/Valisthea)
-**Created:** 2026-04-12
+**Created:** 2026-04-17
 **Requires:** ERC-165
 
 ---
@@ -37,7 +41,7 @@ The PENDING→ACTIVE transition is **implicit** — no transaction needed. It oc
 ## Core Interface
 
 ```solidity
-interface IERCYYYY {
+interface IERC8228 {
     // Session setup
     function createSession(bytes32 sessionId, address[] calldata custodians, uint256 k, bool forgoable) external;
 
@@ -73,8 +77,8 @@ interface IERCYYYY {
 
 ## Extensions
 
-- **Compliance** (`IERCYYYY_Compliance`) — `complianceReceipt()`, `dataCategory()`, `retentionPeriod()` for regulated environments
-- **Hooks** (`IERCYYYY_Hooks`) — `onAmnesiaAchieved()` callback for dependent contracts, called AFTER state transition with 50,000 gas stipend
+- **Compliance** (`IERC8228_Compliance`) — `complianceReceipt()`, `dataCategory()`, `retentionPeriod()` for regulated environments
+- **Hooks** (`IERC8228_Hooks`) — `onAmnesiaAchieved()` callback for dependent contracts, called AFTER state transition with 50,000 gas stipend
 
 ## Repository Structure
 
@@ -84,9 +88,9 @@ styx-erc-cryptographic-amnesia/
 │   └── eip-yyyy.md                    # Official EIP draft
 ├── contracts/
 │   └── interfaces/
-│       ├── IERCYYYY.sol               # Core interface
-│       ├── IERCYYYY_Compliance.sol    # Compliance extension
-│       └── IERCYYYY_Hooks.sol        # Hook callback interface
+│       ├── IERC8228.sol               # Core interface
+│       ├── IERC8228_Compliance.sol    # Compliance extension
+│       └── IERC8228_Hooks.sol        # Hook callback interface
 ├── docs/
 │   └── ceremony-lifecycle.md          # Lifecycle diagram
 ├── test/

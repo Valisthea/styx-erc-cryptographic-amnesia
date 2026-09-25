@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity >=0.8.0;
 
-import "./IERCYYYY.sol";
+import "./IERC8228.sol";
 
-/// @title ERC-YYYY Compliance Extension
+/// @title ERC-8228 Compliance Extension
 /// @author Valisthea (@Valisthea)
 /// @notice Provides audit trail and compliance metadata for amnesia events.
 ///         For regulatory compliance use cases (GDPR, HIPAA, MiCA).
-interface IERCYYYY_Compliance is IERCYYYY {
+interface IERC8228_Compliance is IERC8228 {
 
     /// @notice Returns a compliance receipt for a completed ceremony.
     /// @dev    Contains all information a regulator needs to verify

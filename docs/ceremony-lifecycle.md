@@ -1,6 +1,6 @@
 # Ceremony Lifecycle
 
-Complete state machine for the ERC-YYYY Cryptographic Amnesia ceremony.
+Complete state machine for the ERC-8228 Cryptographic Amnesia ceremony.
 
 ## State Diagram
 
@@ -108,6 +108,6 @@ When a ceremony reaches COMPLETED, registered hooks are called:
 
 Register/remove hooks via:
 ```solidity
-IERCYYYY.registerAmnesiaHook(sessionId, hookContract);
-IERCYYYY.removeAmnesiaHook(sessionId, hookContract);
+IERC8228.registerAmnesiaHook(sessionId, hookContract);
+IERC8228.removeAmnesiaHook(sessionId, hookContract);
 ```
